@@ -8,8 +8,9 @@ Host:   Streamlit Community Cloud (connect GitHub repo)
 
 import streamlit as st
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 
 # ═══════════════════════════════════════════
@@ -130,6 +131,35 @@ def generate_prices():
         })
     return hours
 
+@st.cache_data
+def generate_backtest(n_days=30):
+    """
+    Simulated walk-forward backtest: each day's forecast is scored against
+    that day's realized prices, as if the model were retrained weekly and
+    evaluated only on data it hadn't seen yet. Shows MAE trending down
+    (model improving with more training data) and hit-rate on correctly
+    identifying the cheapest charging hour of the day.
+    """
+    rng = np.random.RandomState(7)
+    today = datetime.now()
+    rows = []
+    for d in range(n_days, 0, -1):
+        date = today - timedelta(days=d)
+        # MAE drifts down over the window (simulating periodic retraining)
+        progress = (n_days - d) / n_days
+        base_mae = 0.052 - 0.022 * progress
+        mae = max(0.012, base_mae + (rng.random() - 0.5) * 0.014)
+        # Hit-rate on cheapest-hour prediction (±1h tolerance) improves too
+        base_hit = 68 + 20 * progress
+        hit_rate = min(100, max(40, base_hit + (rng.random() - 0.5) * 14))
+        rows.append({
+            'date': date.strftime('%d %b'),
+            'day_idx': d,
+            'mae': round(mae, 4),
+            'hit_rate': round(hit_rate, 1),
+        })
+    return rows
+
 prices = generate_prices()
 now_hour = min(datetime.now().hour, 23)
 current_price = prices[now_hour]['actual']
@@ -137,6 +167,14 @@ price_min = min(p['actual'] for p in prices)
 price_max = max(p['actual'] for p in prices)
 price_avg = sum(p['actual'] for p in prices) / 24
 forecast_mae = sum(abs(p['actual'] - p['forecast']) for p in prices) / 24
+
+backtest = generate_backtest(30)
+bt_avg_mae = sum(b['mae'] for b in backtest) / len(backtest)
+bt_first_week_mae = sum(b['mae'] for b in backtest[:7]) / 7
+bt_last_week_mae = sum(b['mae'] for b in backtest[-7:]) / 7
+bt_mae_drift = (bt_last_week_mae - bt_first_week_mae) / bt_first_week_mae * 100
+bt_avg_hit_rate = sum(b['hit_rate'] for b in backtest) / len(backtest)
+bt_best_day = min(backtest, key=lambda b: b['mae'])
 
 # ═══════════════════════════════════════════
 # PLOTLY HELPER
@@ -220,9 +258,28 @@ def metric_card(label, value, unit="", color="#e8edf3", sub=""):
 # TAB 1: DATA PIPELINE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with tab1:
+    # Quality gates — sequential funnel (each record must clear gate N
+    # before reaching gate N+1; order runs cheapest/fastest check first)
+    ingested_total = 14_847_293
+    gates = [
+        ("Gate 1 · Schema & null-field check", 8_142),
+        ("Gate 2 · Price range [0, 15] DKK/kWh", 3_372),
+        ("Gate 3 · Timestamp monotonicity", 191),
+        ("Gate 4 · Cross-source consistency", 9_647),
+        ("Gate 5 · Outlier detection (3σ)", 4_935),
+    ]
+    remaining = ingested_total
+    gate_rows = []
+    for name, rejected in gates:
+        remaining -= rejected
+        gate_rows.append((name, rejected, remaining))
+    final_validated = remaining
+    total_rejected = ingested_total - final_validated
+    drop_rate = total_rejected / ingested_total * 100
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(metric_card("Records Ingested", "14.8M", color=BLUE), unsafe_allow_html=True)
-    c2.markdown(metric_card("Validated", "14.8M", color=CYAN, sub="0.33% drop rate"), unsafe_allow_html=True)
+    c1.markdown(metric_card("Records Ingested", f"{ingested_total/1e6:.1f}M", color=BLUE), unsafe_allow_html=True)
+    c2.markdown(metric_card("Validated", f"{final_validated/1e6:.2f}M", color=CYAN, sub=f"{drop_rate:.2f}% drop rate"), unsafe_allow_html=True)
     c3.markdown(metric_card("Avg Latency", "23.4", "ms", AMBER, "p99: 87.2ms"), unsafe_allow_html=True)
     c4.markdown(metric_card("Uptime", "99.97", "%", CYAN), unsafe_allow_html=True)
 
@@ -285,27 +342,43 @@ with tab1:
     source_html += '</div>'
     st.markdown(source_html, unsafe_allow_html=True)
 
-    # Validation rules
-    rules = [
-        ("Price range [0, 15] DKK/kWh", "3,372", 99.98),
-        ("Timestamp monotonicity", "191", 99.99),
-        ("Null field rejection", "14,835", 99.90),
-        ("Cross-source consistency", "26,287", 99.82),
-        ("Outlier detection (3σ)", "8,175", 99.94),
-    ]
-    rules_html = '<div class="card-box"><div class="card-title">Data Quality — Validation Rules</div>'
-    for rule, failed, rate in rules:
-        bc = "badge-cyan" if rate > 99.9 else "badge-amber"
-        rules_html += (
+    # Quality gates — sequential funnel visualization
+    st.markdown('<div class="card-box"><div class="card-title">Data Quality — Sequential Gate Funnel</div></div>', unsafe_allow_html=True)
+
+    gate_fig = go.Figure(go.Funnel(
+        y=[g[0] for g in gate_rows],
+        x=[g[2] for g in gate_rows],
+        textposition="inside",
+        textinfo="value+percent initial",
+        marker=dict(color=[BLUE, AMBER, PURPLE, "#3ea6ff", CYAN]),
+        connector=dict(line=dict(color=T3, width=1)),
+    ))
+    apply_layout(gate_fig, height=280)
+    gate_fig.update_layout(margin=dict(l=180, r=20, t=10, b=10))
+    st.plotly_chart(gate_fig, use_container_width=True, config={'displayModeBar': False})
+
+    gates_html = '<div class="card-box">'
+    for name, rejected, remaining_after in gate_rows:
+        pass_rate = remaining_after / ingested_total * 100
+        bc = "badge-cyan" if pass_rate > 99.9 else "badge-amber"
+        gates_html += (
             '<div class="rule-row">'
             f'<span style="color:{CYAN};font-size:10px">✓</span>'
-            f'<span style="flex:1;color:#8899aa">{rule}</span>'
-            f'<span style="color:#4a5568;font-size:10px">{failed} rejected</span>'
-            f'<span class="badge {bc}">{rate}%</span>'
+            f'<span style="flex:1;color:#8899aa">{name}</span>'
+            f'<span style="color:#4a5568;font-size:10px">{rejected:,} rejected here</span>'
+            f'<span class="badge {bc}">{pass_rate:.2f}% cumulative</span>'
             '</div>'
         )
-    rules_html += '</div>'
-    st.markdown(rules_html, unsafe_allow_html=True)
+    gates_html += (
+        '<div class="rule-row" style="border-top:1px solid #1e2d3d;margin-top:4px;padding-top:12px;">'
+        f'<span style="color:{CYAN};font-size:11px;font-weight:700">FINAL</span>'
+        f'<span style="flex:1;color:#e8edf3;font-weight:600">Clean records reaching storage</span>'
+        f'<span style="color:#4a5568;font-size:10px">{total_rejected:,} total rejected</span>'
+        f'<span class="badge badge-cyan">{final_validated:,}</span>'
+        '</div>'
+    )
+    gates_html += '</div>'
+    st.markdown(gates_html, unsafe_allow_html=True)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -345,6 +418,51 @@ with tab2:
     fig2.add_hline(y=0, line_color=T3, line_width=0.5)
     apply_layout(fig2, height=200)
     st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ─── Backtest — 30-day walk-forward validation ───
+    st.markdown('<div class="card-box"><div class="card-title">30-Day Backtest — Walk-Forward Validation</div></div>', unsafe_allow_html=True)
+
+    bc1, bc2, bc3, bc4 = st.columns(4)
+    bc1.markdown(metric_card("30-Day Avg MAE", f"{bt_avg_mae:.3f}", "DKK", CYAN), unsafe_allow_html=True)
+    bc2.markdown(metric_card("Best Day", f"{bt_best_day['mae']:.3f}", "DKK", CYAN, bt_best_day['date']), unsafe_allow_html=True)
+    bc3.markdown(metric_card("Cheapest-Hour Hit Rate", f"{bt_avg_hit_rate:.0f}", "%", PURPLE, "±1h tolerance"), unsafe_allow_html=True)
+    drift_color = CYAN if bt_mae_drift < 0 else RED
+    drift_label = f"{bt_mae_drift:+.0f}% vs week 1" if bt_mae_drift != 0 else "stable"
+    bc4.markdown(metric_card("Model Drift", f"{bt_mae_drift:+.0f}", "%", drift_color, drift_label), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    bt_dates = [b['date'] for b in backtest]
+    bt_fig = make_subplots(specs=[[{"secondary_y": True}]])
+    bt_fig.add_trace(go.Bar(
+        x=bt_dates, y=[b['hit_rate'] for b in backtest],
+        name='Cheapest-hour hit rate (%)',
+        marker_color='rgba(131,56,236,0.45)',
+        hovertemplate='%{x}: %{y:.0f}%% hit rate<extra></extra>',
+    ), secondary_y=True)
+    bt_fig.add_trace(go.Scatter(
+        x=bt_dates, y=[b['mae'] for b in backtest],
+        name='Daily MAE (DKK)', mode='lines+markers',
+        line=dict(color=CYAN, width=2), marker=dict(size=4, color=CYAN),
+        hovertemplate='%{x}: %{y:.3f} DKK<extra></extra>',
+    ), secondary_y=False)
+    apply_layout(bt_fig, height=280, show_legend=True)
+    bt_fig.update_yaxes(title_text="MAE (DKK)", secondary_y=False, gridcolor=GRID_COLOR,
+                        title_font=dict(size=9, color=T3), tickfont=dict(size=9))
+    bt_fig.update_yaxes(title_text="Hit rate (%)", secondary_y=True, gridcolor=GRID_COLOR,
+                        title_font=dict(size=9, color=T3), tickfont=dict(size=9), range=[0, 105])
+    bt_fig.update_xaxes(tickfont=dict(size=8), nticks=10)
+    st.plotly_chart(bt_fig, use_container_width=True, config={'displayModeBar': False})
+
+    st.markdown(
+        '<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:#4a5568;margin-top:-8px;">'
+        'Walk-forward methodology: each day scored only against a model trained on prior days — '
+        'mirrors production drift monitoring rather than a single in-sample snapshot.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

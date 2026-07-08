@@ -178,21 +178,20 @@ def apply_layout(fig, height=300, show_legend=False):
 # ═══════════════════════════════════════════
 # HEADER
 # ═══════════════════════════════════════════
-st.markdown(f"""
-<div class="header-container">
-    <div class="header-logo">E</div>
-    <div>
-        <div class="header-title">Enkel Energy Intelligence</div>
-        <div class="header-sub">DEEP TECH · PRICE OPTIMIZATION · CLEAN DATA</div>
-    </div>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
-        <span class="badge badge-cyan"><span class="dot dot-healthy"></span> PIPELINE HEALTHY</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#4a5568;">
-            {datetime.now().strftime('%H:%M:%S')}
-        </span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+header_html = (
+    '<div class="header-container">'
+    '<div class="header-logo">E</div>'
+    '<div>'
+    '<div class="header-title">Enkel Energy Intelligence</div>'
+    '<div class="header-sub">DEEP TECH · PRICE OPTIMIZATION · CLEAN DATA</div>'
+    '</div>'
+    '<div style="margin-left:auto;display:flex;align-items:center;gap:10px;">'
+    '<span class="badge badge-cyan"><span class="dot dot-healthy"></span> PIPELINE HEALTHY</span>'
+    f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:#4a5568;">{datetime.now().strftime("%H:%M:%S")}</span>'
+    '</div>'
+    '</div>'
+)
+st.markdown(header_html, unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════
 # TABS
@@ -205,11 +204,17 @@ tab1, tab2, tab3, tab4 = st.tabs([
 def metric_card(label, value, unit="", color="#e8edf3", sub=""):
     sub_html = f'<div class="metric-sub">{sub}</div>' if sub else ''
     unit_html = f'<span class="metric-unit">{unit}</span>' if unit else ''
-    return f"""<div class="metric-card">
-        <div class="metric-label">{label}</div>
-        <div><span class="metric-value" style="color:{color}">{value}</span> {unit_html}</div>
-        {sub_html}
-    </div>"""
+    # NOTE: built as a single line with no leading whitespace — indented
+    # multi-line HTML inside st.markdown gets misread as a Markdown code
+    # block (4+ leading spaces triggers it), which is what caused the
+    # stray "</div>" boxes to render as literal text.
+    return (
+        '<div class="metric-card">'
+        f'<div class="metric-label">{label}</div>'
+        f'<div><span class="metric-value" style="color:{color}">{value}</span> {unit_html}</div>'
+        f'{sub_html}'
+        '</div>'
+    )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TAB 1: DATA PIPELINE
@@ -234,13 +239,16 @@ with tab1:
     cols = st.columns(len(stages) * 2 - 1)
     for i, (icon, label, sub, count, color) in enumerate(stages):
         with cols[i * 2]:
-            st.markdown(f"""
-            <div class="pipeline-stage" style="background:rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.06);border:1px solid rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.25);">
-                <div class="pipeline-icon">{icon}</div>
-                <div class="pipeline-label" style="color:{color}">{label}</div>
-                <div class="pipeline-sub">{sub}</div>
-                <div class="pipeline-count">{count}</div>
-            </div>""", unsafe_allow_html=True)
+            rgb = f"{int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)}"
+            stage_html = (
+                f'<div class="pipeline-stage" style="background:rgba({rgb},0.06);border:1px solid rgba({rgb},0.25);">'
+                f'<div class="pipeline-icon">{icon}</div>'
+                f'<div class="pipeline-label" style="color:{color}">{label}</div>'
+                f'<div class="pipeline-sub">{sub}</div>'
+                f'<div class="pipeline-count">{count}</div>'
+                '</div>'
+            )
+            st.markdown(stage_html, unsafe_allow_html=True)
         if i < len(stages) - 1:
             with cols[i * 2 + 1]:
                 st.markdown('<div style="text-align:center;padding-top:30px;color:#4a5568;font-family:monospace;font-size:16px;">→</div>', unsafe_allow_html=True)
@@ -262,17 +270,18 @@ with tab1:
         fresh_val = float(freshness.replace('s',''))
         fc = CYAN if fresh_val < 3 else AMBER
         qc = CYAN if quality > 99 else AMBER if quality > 98 else RED
-        source_html += f"""
-        <div class="source-row">
-            <span class="dot {dot_cls}"></span>
-            <span style="color:#e8edf3;font-weight:500;flex:1;min-width:160px">{name}</span>
-            <span style="color:#8899aa;width:60px">{records}</span>
-            <span style="color:{fc};width:50px">{freshness}</span>
-            <span style="width:100px">
-                <span class="q-bar-outer"><span class="q-bar-inner" style="width:{quality}%;background:{qc}"></span></span>
-                <span style="color:{qc};font-size:10px">{quality}%</span>
-            </span>
-        </div>"""
+        source_html += (
+            '<div class="source-row">'
+            f'<span class="dot {dot_cls}"></span>'
+            f'<span style="color:#e8edf3;font-weight:500;flex:1;min-width:160px">{name}</span>'
+            f'<span style="color:#8899aa;width:60px">{records}</span>'
+            f'<span style="color:{fc};width:50px">{freshness}</span>'
+            '<span style="width:100px">'
+            f'<span class="q-bar-outer"><span class="q-bar-inner" style="width:{quality}%;background:{qc}"></span></span>'
+            f'<span style="color:{qc};font-size:10px">{quality}%</span>'
+            '</span>'
+            '</div>'
+        )
     source_html += '</div>'
     st.markdown(source_html, unsafe_allow_html=True)
 
@@ -287,13 +296,14 @@ with tab1:
     rules_html = '<div class="card-box"><div class="card-title">Data Quality — Validation Rules</div>'
     for rule, failed, rate in rules:
         bc = "badge-cyan" if rate > 99.9 else "badge-amber"
-        rules_html += f"""
-        <div class="rule-row">
-            <span style="color:{CYAN};font-size:10px">✓</span>
-            <span style="flex:1;color:#8899aa">{rule}</span>
-            <span style="color:#4a5568;font-size:10px">{failed} rejected</span>
-            <span class="badge {bc}">{rate}%</span>
-        </div>"""
+        rules_html += (
+            '<div class="rule-row">'
+            f'<span style="color:{CYAN};font-size:10px">✓</span>'
+            f'<span style="flex:1;color:#8899aa">{rule}</span>'
+            f'<span style="color:#4a5568;font-size:10px">{failed} rejected</span>'
+            f'<span class="badge {bc}">{rate}%</span>'
+            '</div>'
+        )
     rules_html += '</div>'
     st.markdown(rules_html, unsafe_allow_html=True)
 
@@ -431,27 +441,30 @@ with tab4:
     tags = ''.join(f'<span class="badge badge-purple">{t}</span>' for t in [
         "Price Forecasting", "Rolling-Horizon Optimization",
         "V2G Arbitrage", "Data Quality Pipeline", "Sub-second Latency"])
-    st.markdown(f"""
-    <div class="thesis-card">
-        <div class="thesis-title">⚡ THE ENKEL THESIS</div>
-        <div class="thesis-text">
-            Every idle EV battery is untapped grid-scale flexibility. By forecasting spot prices
-            with sub-minute ML inference, scheduling charge during wind-surplus lows, and selling
-            back during demand peaks, each connected vehicle becomes a revenue-generating grid asset.
-            Clean data is the foundation — millisecond-fresh, schema-validated, cross-source-consistent
-            price feeds that the optimizer can trust unconditionally. The result: customers charge for
-            less, earn from V2G, and the grid stays balanced without building new peaker plants.
-        </div>
-        <div class="tag-row">{tags}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    thesis_text = (
+        "Every idle EV battery is untapped grid-scale flexibility. By forecasting spot prices "
+        "with sub-minute ML inference, scheduling charge during wind-surplus lows, and selling "
+        "back during demand peaks, each connected vehicle becomes a revenue-generating grid asset. "
+        "Clean data is the foundation — millisecond-fresh, schema-validated, cross-source-consistent "
+        "price feeds that the optimizer can trust unconditionally. The result: customers charge for "
+        "less, earn from V2G, and the grid stays balanced without building new peaker plants."
+    )
+    thesis_html = (
+        '<div class="thesis-card">'
+        '<div class="thesis-title">⚡ THE ENKEL THESIS</div>'
+        f'<div class="thesis-text">{thesis_text}</div>'
+        f'<div class="tag-row">{tags}</div>'
+        '</div>'
+    )
+    st.markdown(thesis_html, unsafe_allow_html=True)
 
 # Footer
-st.markdown("""
-<hr style="margin-top:40px;">
-<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;
-    font-family:'JetBrains Mono',monospace;font-size:10px;color:#4a5568;padding-bottom:20px;">
-    <span>Built by Umair Ali · Deep Tech Demo for Enkel</span>
-    <span>Streamlit · Plotly · Rolling-Horizon Optimization · Real-time Data Pipeline</span>
-</div>
-""", unsafe_allow_html=True)
+footer_html = (
+    '<hr style="margin-top:40px;">'
+    '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;'
+    'font-family:\'JetBrains Mono\',monospace;font-size:10px;color:#4a5568;padding-bottom:20px;">'
+    '<span>Built by Umair Ali · Deep Tech Demo for Enkel</span>'
+    '<span>Streamlit · Plotly · Rolling-Horizon Optimization · Real-time Data Pipeline</span>'
+    '</div>'
+)
+st.markdown(footer_html, unsafe_allow_html=True)
